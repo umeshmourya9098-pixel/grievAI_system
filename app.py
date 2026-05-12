@@ -5,7 +5,6 @@ import hashlib
 import datetime
 import random
 import sqlite3
-import requests
 from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
 from functools import wraps
@@ -26,79 +25,74 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'grievai.db')
 UPLOAD_FOLDER = os.path.join('static', 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Email Configuration (Resend API)
-RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
-EMAIL_ENABLED = bool(RESEND_API_KEY)
-
 # Store OTP and Verification Tokens
 OTP_STORE = {}
 VERIFICATION_TOKENS = {}
 
 # ==============================================
-# RESEND EMAIL FUNCTION
+# OTP FUNCTIONS
 # ==============================================
 
-def send_verification_email(email, name, token):
-    """Send verification email using Resend API"""
-    verification_link = f"{BASE_URL}/verify-email?token={token}&email={email}"
+def generate_otp():
+    return ''.join(random.choices('0123456789', k=6))
+
+def send_otp_email(email, otp):
+    """Send OTP via email using Resend API"""
+    api_key = os.environ.get('RESEND_API_KEY', '')
     
-    if not RESEND_API_KEY:
-        print(f"\n⚠️ RESEND_API_KEY not set! Please add it in Render Environment Variables")
-        print(f"📧 Verification link for {email}: {verification_link}\n")
+    if not api_key:
+        print(f"\n⚠️ RESEND_API_KEY not set!")
+        print(f"📧 OTP for {email}: {otp}\n")
         return
     
     html_content = f"""
     <!DOCTYPE html>
     <html>
     <head><meta charset="UTF-8"></head>
-    <body style="font-family: Arial, sans-serif; text-align: center; background: #f4f6fb; padding: 20px;">
-        <div style="max-width: 450px; margin: auto; background: white; border-radius: 16px; padding: 30px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
+    <body style="font-family: Arial; text-align: center; background: #f4f6fb; padding: 20px;">
+        <div style="max-width: 450px; margin: auto; background: white; border-radius: 16px; padding: 30px;">
             <div style="background: linear-gradient(135deg,#1B8A4E,#0E6B6B); padding: 15px; border-radius: 12px;">
                 <h1 style="color: white; margin: 0;">🏛️ GrievAI</h1>
-                <p style="color: rgba(255,255,255,0.9); margin: 5px 0 0;">मध्य प्रदेश सरकार</p>
+                <p style="color: rgba(255,255,255,0.9);">मध्य प्रदेश सरकार</p>
             </div>
             
-            <h2 style="color: #1B8A4E; margin-top: 25px;">नमस्ते {name}! 👋</h2>
-            <p style="color: #555; line-height: 1.6;">कृपया अपना ईमेल वेरिफाई करने के लिए नीचे दिए गए बटन पर क्लिक करें:</p>
+            <h2 style="color: #1B8A4E;">नमस्ते! 👋</h2>
+            <p>आपका OTP कोड नीचे दिया गया है:</p>
             
-            <div style="margin: 25px 0;">
-                <a href="{verification_link}" style="background: linear-gradient(90deg,#1B8A4E,#0E6B6B); color: white; padding: 12px 28px; text-decoration: none; border-radius: 50px; display: inline-block; font-weight: bold;">✅ Verify Email</a>
+            <div style="font-size: 36px; font-weight: bold; background: #f0f0f0; padding: 15px; border-radius: 10px; letter-spacing: 5px; margin: 20px 0;">
+                {otp}
             </div>
             
-            <p style="color: #666; font-size: 12px;">या इस लिंक को कॉपी करें:</p>
-            <p style="background: #f0f0f0; padding: 10px; border-radius: 8px; word-break: break-all; font-size: 12px;">{verification_link}</p>
-            
-            <p style="color: #888; font-size: 12px; margin-top: 20px;">⚠️ यह लिंक <strong>24 घंटे</strong> के लिए वैध है।</p>
-            <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
-            <p style="color: #999; font-size: 11px;">© 2024 GrievAI Portal - मध्य प्रदेश सरकार</p>
+            <p style="color: #888; font-size: 12px;">⚠️ यह OTP <strong>10 मिनट</strong> के लिए वैध है।</p>
         </div>
     </body>
     </html>
     """
     
     try:
+        import requests
         response = requests.post(
             "https://api.resend.com/emails",
             headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             },
             json={
                 "from": "GrievAI <onboarding@resend.dev>",
                 "to": email,
-                "subject": "GrievAI Portal - Verify Your Email",
+                "subject": "GrievAI - Your OTP Code",
                 "html": html_content
             }
         )
         
         if response.status_code == 200:
-            print(f"✅ Verification email sent successfully to {email}")
+            print(f"✅ OTP email sent to {email}")
         else:
-            print(f"❌ Failed to send email to {email}: {response.text}")
-            print(f"📧 Verification link: {verification_link}")
+            print(f"❌ Failed to send OTP to {email}")
+            print(f"📧 OTP for {email}: {otp}")
     except Exception as e:
         print(f"❌ Email error: {e}")
-        print(f"📧 Verification link: {verification_link}")
+        print(f"📧 OTP for {email}: {otp}")
 
 # ==============================================
 # DATABASE FUNCTIONS
@@ -116,9 +110,6 @@ def generate_complaint_id():
     now = datetime.datetime.now()
     rand = ''.join(random.choices('0123456789', k=4))
     return f"GRV{now.strftime('%y%m%d')}{rand}"
-
-def generate_otp():
-    return ''.join(random.choices('0123456789', k=6))
 
 def generate_verification_token():
     return secrets.token_urlsafe(32)
@@ -278,112 +269,78 @@ def instructions_page():
     return render_template('instructions.html')
 
 # ==============================================
-# VERIFICATION ROUTE
+# API: SEND OTP
 # ==============================================
 
-@app.route('/verify-email')
-def verify_email():
-    token = request.args.get('token')
-    email = request.args.get('email')
-    
-    if not token or not email:
-        return """
-        <html>
-        <body style="text-align:center; padding:50px;">
-            <h2 style="color:#C0392B;">❌ Invalid Link</h2>
-            <a href="/citizen">Go to Login →</a>
-        </body>
-        </html>
-        """
-    
-    stored = VERIFICATION_TOKENS.get(email)
-    
-    if not stored or stored['token'] != token:
-        return """
-        <html>
-        <body style="text-align:center; padding:50px;">
-            <h2 style="color:#C0392B;">❌ Invalid or Expired Link</h2>
-            <a href="/citizen">Register Again →</a>
-        </body>
-        </html>
-        """
-    
-    if datetime.datetime.now() > stored['expires']:
-        del VERIFICATION_TOKENS[email]
-        return """
-        <html>
-        <body style="text-align:center; padding:50px;">
-            <h2 style="color:#C0392B;">❌ Link Expired (24 hours)</h2>
-            <a href="/citizen">Register Again →</a>
-        </body>
-        </html>
-        """
-    
-    # Mark as verified
-    conn = get_db()
-    conn.execute('UPDATE citizens SET is_verified = 1 WHERE email = ?', (email,))
-    conn.commit()
-    conn.close()
-    
-    del VERIFICATION_TOKENS[email]
-    
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Email Verified - GrievAI</title>
-        <style>
-            body { font-family: Arial; background: linear-gradient(135deg,#0E4D2F,#1B8A4E); display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-            .card { background: white; border-radius: 20px; padding: 40px; text-align: center; max-width: 400px; }
-            h2 { color: #1B8A4E; }
-            .btn { background: #1B8A4E; color: white; padding: 12px 30px; text-decoration: none; border-radius: 30px; display: inline-block; margin-top: 20px; }
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h2>✅ Email Verified!</h2>
-            <p>आपका ईमेल सफलतापूर्वक वेरिफाई हो गया है।</p>
-            <a href="/citizen" class="btn">Login Now →</a>
-        </div>
-    </body>
-    </html>
-    """
-
-# ==============================================
-# API: SEND VERIFICATION
-# ==============================================
-
-@app.route('/api/send-verification', methods=['POST'])
-def send_verification():
+@app.route('/api/send-otp', methods=['POST'])
+def send_otp():
     data = request.json
     email = data.get('email', '').strip().lower()
     
     if not email:
         return jsonify({'success': False, 'message': 'Email is required'})
     
-    token = generate_verification_token()
-    VERIFICATION_TOKENS[email] = {
-        'token': token,
-        'expires': datetime.datetime.now() + datetime.timedelta(hours=24)
-    }
-    
-    send_verification_email(email, "User", token)
-    
-    return jsonify({'success': True, 'message': 'Verification email sent!'})
-
-@app.route('/api/check-verification', methods=['POST'])
-def check_verification():
-    data = request.json
-    email = data.get('email', '').strip().lower()
-    
+    # Check if user exists
     conn = get_db()
-    row = conn.execute('SELECT is_verified FROM citizens WHERE email = ?', (email,)).fetchone()
+    user = conn.execute('SELECT * FROM citizens WHERE email = ?', (email,)).fetchone()
     conn.close()
     
-    if row and row['is_verified'] == 1:
-        return jsonify({'success': True, 'verified': True})
-    return jsonify({'success': True, 'verified': False})
+    if not user:
+        return jsonify({'success': False, 'message': 'Email not registered!'})
+    
+    if user['is_verified'] == 1:
+        return jsonify({'success': False, 'message': 'Email already verified! Please login.'})
+    
+    # Generate and store OTP
+    otp = generate_otp()
+    OTP_STORE[email] = {
+        'otp': otp,
+        'expires': datetime.datetime.now() + datetime.timedelta(minutes=10)
+    }
+    
+    # Send OTP via email
+    send_otp_email(email, otp)
+    
+    print(f"\n{'='*40}")
+    print(f"[OTP] {email} => {otp}")
+    print(f"{'='*40}\n")
+    
+    return jsonify({'success': True, 'otp': otp, 'message': 'OTP sent successfully!'})
+
+# ==============================================
+# API: VERIFY OTP
+# ==============================================
+
+@app.route('/api/verify-otp', methods=['POST'])
+def verify_otp():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    otp = data.get('otp', '').strip()
+    
+    if not email or not otp:
+        return jsonify({'success': False, 'message': 'Email and OTP required'})
+    
+    stored = OTP_STORE.get(email)
+    
+    if not stored:
+        return jsonify({'success': False, 'message': 'OTP not requested or expired'})
+    
+    if datetime.datetime.now() > stored['expires']:
+        del OTP_STORE[email]
+        return jsonify({'success': False, 'message': 'OTP expired! Please request again.'})
+    
+    if stored['otp'] != otp:
+        return jsonify({'success': False, 'message': 'Invalid OTP!'})
+    
+    # Mark user as verified
+    conn = get_db()
+    conn.execute('UPDATE citizens SET is_verified = 1 WHERE email = ?', (email,))
+    conn.commit()
+    conn.close()
+    
+    del OTP_STORE[email]
+    
+    return jsonify({'success': True, 'message': 'OTP verified successfully!'})
 
 # ==============================================
 # API: CITIZEN REGISTER
@@ -425,16 +382,7 @@ def citizen_register():
     conn.commit()
     conn.close()
     
-    # Generate verification token and send email
-    token = generate_verification_token()
-    VERIFICATION_TOKENS[email] = {
-        'token': token,
-        'expires': datetime.datetime.now() + datetime.timedelta(hours=24)
-    }
-    
-    send_verification_email(email, name, token)
-    
-    return jsonify({'success': True, 'message': 'Registration successful! Please check your email for verification link.'})
+    return jsonify({'success': True, 'message': 'Registration successful! Please login and verify with OTP.'})
 
 # ==============================================
 # API: CITIZEN LOGIN
@@ -460,12 +408,23 @@ def citizen_login():
     if row['is_verified'] == 0:
         conn.close()
         print(f"❌ Login failed - Email not verified")
-        return jsonify({'success': False, 'not_verified': True, 'message': '❌ Please verify your email first! Check your inbox.'})
+        return jsonify({'success': False, 'not_verified': True, 'message': '❌ Please verify your email first! Check your email for OTP.'})
     
     conn.close()
     print(f"✅ Login successful for {email}")
     
+    session['citizen_logged_in'] = True
+    session['citizen_email'] = row['email']
+    session['citizen_name'] = row['name']
+    
     return jsonify({'success': True, 'name': row['name'], 'email': row['email'], 'mobile': row['mobile'], 'city': row['city'] or ''})
+
+@app.route('/api/citizen/logout', methods=['POST'])
+def citizen_logout():
+    session.pop('citizen_logged_in', None)
+    session.pop('citizen_email', None)
+    session.pop('citizen_name', None)
+    return jsonify({'success': True, 'message': 'Logged out'})
 
 @app.route('/api/citizen/reset-password', methods=['POST'])
 def citizen_reset():
@@ -486,52 +445,6 @@ def citizen_reset():
         return jsonify({'success': False, 'message': 'Email नहीं मिला'})
     
     return jsonify({'success': True, 'message': 'पासवर्ड बदल गया!'})
-
-@app.route('/api/citizen/logout', methods=['POST'])
-def citizen_logout():
-    session.pop('citizen_logged_in', None)
-    return jsonify({'success': True, 'message': 'Logged out'})
-
-# ==============================================
-# API: OTP
-# ==============================================
-
-@app.route('/api/otp/send', methods=['POST'])
-def send_otp():
-    data = request.json
-    target = data.get('target', '').strip()
-    
-    if not target:
-        return jsonify({'success': False, 'message': 'Mobile or Email required'})
-    
-    otp = generate_otp()
-    OTP_STORE[target] = {'otp': otp, 'expires': datetime.datetime.now() + datetime.timedelta(minutes=10)}
-    
-    print(f"\n{'='*40}")
-    print(f"[OTP] {target} => {otp}")
-    print(f"{'='*40}\n")
-    
-    return jsonify({'success': True, 'otp': otp, 'message': 'OTP generated!'})
-
-@app.route('/api/otp/verify', methods=['POST'])
-def verify_otp():
-    data = request.json
-    target = data.get('target', '').strip()
-    otp_in = data.get('otp', '').strip()
-    
-    if target not in OTP_STORE:
-        return jsonify({'success': False, 'message': 'OTP not requested'})
-    
-    entry = OTP_STORE[target]
-    if datetime.datetime.now() > entry['expires']:
-        del OTP_STORE[target]
-        return jsonify({'success': False, 'message': 'OTP expired'})
-    
-    if entry['otp'] != otp_in:
-        return jsonify({'success': False, 'message': 'Wrong OTP'})
-    
-    del OTP_STORE[target]
-    return jsonify({'success': True, 'message': 'OTP verified!'})
 
 # ==============================================
 # API: COMPLAINTS
@@ -673,11 +586,17 @@ def dept_login():
     if row['is_verified'] == 0:
         return jsonify({'success': False, 'not_verified': True, 'message': '❌ अकाउंट Verify नहीं हुआ है।'})
     
+    session['dept_logged_in'] = True
+    session['dept_email'] = row['email']
+    session['dept_name'] = row['dept_name']
+    
     return jsonify({'success': True, 'dept_name': row['dept_name'], 'officer_name': row['officer_name'], 'email': row['email']})
 
 @app.route('/api/department/logout', methods=['POST'])
 def dept_logout():
     session.pop('dept_logged_in', None)
+    session.pop('dept_email', None)
+    session.pop('dept_name', None)
     return jsonify({'success': True, 'message': 'Logged out'})
 
 # ==============================================
@@ -697,12 +616,14 @@ def admin_login():
     
     if row:
         session['admin_logged_in'] = True
+        session['admin_email'] = row['email']
         return jsonify({'success': True, 'name': row['name'], 'role': row['role']})
     return jsonify({'success': False, 'message': 'Admin credentials गलत हैं'})
 
 @app.route('/api/admin/logout', methods=['POST'])
 def admin_logout():
     session.pop('admin_logged_in', None)
+    session.pop('admin_email', None)
     return jsonify({'success': True, 'message': 'Logged out'})
 
 @app.route('/api/admin/all-data', methods=['GET'])
